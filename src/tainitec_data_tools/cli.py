@@ -35,6 +35,17 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("output", help="Path to write the output .edf file")
 
     parser.add_argument(
+        "--scaling",
+        choices=["unipolar", "bipolar"],
+        default="unipolar",
+        help=(
+            "Signal convention. 'unipolar' (default) maps the ADC range to "
+            "0..mvolt_range mV, matching native TAINILIVE exports. 'bipolar' "
+            "centres on 0 V over ±mvolt_range/2 mV."
+        ),
+    )
+
+    parser.add_argument(
         "--no-yaml",
         action="store_true",
         help="Ignore any _configuration.yaml sidecar.",
@@ -108,6 +119,7 @@ def main(argv: list[str] | None = None) -> int:
         transmitter_alias=args.alias,
         transmitter_id=args.transmitter_id,
         start_datetime=args.start,
+        scaling=args.scaling,
     )
     return 0
 

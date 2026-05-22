@@ -35,6 +35,15 @@ DEFAULTS = {
 
 _SYNC_LINE = re.compile(r"(\d+)\s+SYNC_(\d+)")
 
+# Signal scaling conventions:
+#   "unipolar" — raw 0..2^bit_depth-1 maps to 0..mvolt_range mV (ADC midpoint
+#                at +mvolt_range/2). Matches native TAINILIVE EDF exports and
+#                any pipeline calibrated to them. This is the default.
+#   "bipolar"  — the same signal shifted so the ADC midpoint sits at 0 V,
+#                giving a ±mvolt_range/2 mV range. Zero-mean, but differs from
+#                native files by a constant +mvolt_range/2 offset.
+SCALINGS = ("unipolar", "bipolar")
+
 
 @dataclass
 class Recording:
@@ -43,6 +52,7 @@ class Recording:
     event_samples: list[int] = field(default_factory=list)  # raw sample indices
     event_values: list[int] = field(default_factory=list)
     mvolt_range: float = DEFAULTS["mvolt_range"]
+    scaling: str = "unipolar"
     transmitter_alias: str = DEFAULTS["transmitter_alias"]
     transmitter_id: str = DEFAULTS["transmitter_id"]
     prefilt_hp: float | None = None
@@ -99,6 +109,7 @@ def load_dat(
     start_datetime: datetime | None = None,
     transmitter_alias: str | None = None,
     transmitter_id: str | None = None,
+    scaling: str = "unipolar",
 ) -> Recording:
     """Load a TAINILIVE .dat recording.
 
@@ -113,7 +124,12 @@ def load_dat(
 
     ``decimation`` has no default and must be supplied via the YAML, the kwarg,
     or explicitly — there's no safe guess.
+
+    ``scaling`` selects the signal convention (see :data:`SCALINGS`). The
+    default ``"unipolar"`` matches native TAINILIVE EDF exports.
     """
+    if scaling not in SCALINGS:
+        raise ValueError(f"scaling must be one of {SCALINGS}, got {scaling!r}")
     dat_path = Path(dat_path)
     sync_path, config_path = _sidecar_paths(dat_path)
 
@@ -196,18 +212,20 @@ def load_dat(
     lost_symbol_v = int(params["lost_data_symbol"])
 
     # TAINILIVE stores 12-bit offset-binary ADC values sign-extended to int16.
-    # ``mvolt_range`` is the full peak-to-peak swing in mV, so the LSB size
-    # is mvolt_range / (2^bit_depth - 1). The midpoint (2^(bit_depth-1))
-    # corresponds to 0 V baseline, giving a bipolar range of ±mvolt_range/2.
+    # ``mvolt_range`` is the full peak-to-peak swing in mV, so 1 LSB =
+    # mvolt_range / (2^bit_depth - 1). For "unipolar" (native), raw maps
+    # directly to 0..mvolt_range. For "bipolar", we subtract the midpoint
+    # (2^(bit_depth-1) = 0 V baseline) giving ±mvolt_range/2.
     midpoint = 1 << (bit_depth_v - 1)
     uv_per_lsb = (mvolt_range_v * 1000.0) / ((1 << bit_depth_v) - 1)
+    offset = midpoint if scaling == "bipolar" else 0
 
     raw = np.fromfile(dat_path, dtype="<i2")
     if raw.size % no_channels_v != 0:
         raw = raw[: (raw.size // no_channels_v) * no_channels_v]
     frames = raw.reshape(-1, no_channels_v).T
     lost_mask = frames == lost_symbol_v
-    signals_uv = (frames.astype(np.float64) - midpoint) * uv_per_lsb
+    signals_uv = (frames.astype(np.float64) - offset) * uv_per_lsb
     signals_uv[lost_mask] = 0.0
 
     event_samples: list[int] = []
@@ -226,6 +244,7 @@ def load_dat(
         event_samples=event_samples,
         event_values=event_values,
         mvolt_range=mvolt_range_v,
+        scaling=scaling,
         transmitter_alias=str(params["transmitter_alias"] or ""),
         transmitter_id=str(params["transmitter_id"] or ""),
         prefilt_hp=params["prefilt_hp"],

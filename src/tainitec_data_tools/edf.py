@@ -15,10 +15,12 @@ from tainitec_data_tools.dat import Recording
 def write_edf_plus(recording: Recording, edf_path: str | Path) -> None:
     """Write a Recording to disk as an EDF+ file.
 
-    Signals are stored in millivolts (mV) with 16-bit digital encoding, in a
-    bipolar range of ±mvolt_range mV centred on 0 V. Sync events are written
-    as instantaneous EDF+ annotations of the form ``SYNC_<value>``, aligned
-    to the integer EDF sample index of their original .sync sample number.
+    Signals are stored in millivolts (mV) with 16-bit digital encoding. The
+    physical range follows the recording's scaling convention: ``unipolar``
+    spans 0..mvolt_range mV (matching native TAINILIVE exports), ``bipolar``
+    spans ±mvolt_range/2 mV centred on 0 V. Sync events are written as
+    instantaneous EDF+ annotations of the form ``SYNC_<value>``, aligned to
+    the integer EDF sample index of their original .sync sample number.
 
     EDF requires an integer number of samples per record; TAINILIVE's
     decimated rate (e.g. 19531.25/18 ≈ 1085.07 Hz) is not integer, so the
@@ -35,10 +37,15 @@ def write_edf_plus(recording: Recording, edf_path: str | Path) -> None:
     start_dt = recording.start_datetime or datetime.now()
 
     # EDF unit is mV (matches native TAINILIVE exports). Internal Recording
-    # holds uV, so divide by 1000 when serialising. The ADC's mvolt_range
-    # is peak-to-peak, so the bipolar range is half that on each side.
-    phys_max = recording.mvolt_range / 2.0
-    phys_min = -phys_max
+    # holds uV, so divide by 1000 when serialising. mvolt_range is the ADC's
+    # full peak-to-peak swing, so the physical range depends on the scaling:
+    # unipolar fills 0..mvolt_range; bipolar is centred at ±mvolt_range/2.
+    if recording.scaling == "bipolar":
+        phys_max = recording.mvolt_range / 2.0
+        phys_min = -phys_max
+    else:  # unipolar
+        phys_max = recording.mvolt_range
+        phys_min = 0.0
     edf_sample_frequency = int(round(recording.sample_frequency))
 
     transducer_str = (

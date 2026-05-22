@@ -80,17 +80,40 @@ def no_yaml(tmp_path):
     return dat, n
 
 
-def test_dat_with_yaml_deinterlaces_and_centers(with_yaml):
+# mvolt_range is peak-to-peak, so 1 LSB = mvolt_range / (2^bit_depth - 1).
+UV_PER_LSB = (MVOLT_RANGE * 1000.0) / ((1 << BIT_DEPTH) - 1)
+
+
+def test_dat_deinterlaces_unipolar_default(with_yaml):
+    """Default scaling is unipolar: raw maps directly (no midpoint subtraction)."""
     dat, _ = with_yaml
     rec = load_dat(dat)
+    assert rec.scaling == "unipolar"
     assert rec.signals_uv.shape[0] == N_CHANNELS
     assert rec.sample_frequency == pytest.approx(SF)
-    # mvolt_range is peak-to-peak, so 1 LSB = mvolt_range / (2^bit_depth - 1).
-    uv_per_lsb = (MVOLT_RANGE * 1000.0) / ((1 << BIT_DEPTH) - 1)
     for ch in range(N_CHANNELS):
-        np.testing.assert_allclose(rec.signals_uv[ch, 50], ch * 10 * uv_per_lsb)
+        # raw value is midpoint + ch*10, mapped directly to uV.
+        np.testing.assert_allclose(
+            rec.signals_uv[ch, 50], (MIDPOINT + ch * 10) * UV_PER_LSB
+        )
     assert rec.signals_uv[0, 100] == 0.0
     assert rec.signals_uv[0, 200] == 0.0
+
+
+def test_dat_deinterlaces_bipolar_centers(with_yaml):
+    """Bipolar scaling subtracts the midpoint, so the baseline is 0 uV."""
+    dat, _ = with_yaml
+    rec = load_dat(dat, scaling="bipolar")
+    assert rec.scaling == "bipolar"
+    for ch in range(N_CHANNELS):
+        np.testing.assert_allclose(rec.signals_uv[ch, 50], ch * 10 * UV_PER_LSB)
+    assert rec.signals_uv[0, 100] == 0.0
+
+
+def test_invalid_scaling_rejected(with_yaml):
+    dat, _ = with_yaml
+    with pytest.raises(ValueError, match="scaling"):
+        load_dat(dat, scaling="nonsense")
 
 
 def test_yaml_nominal_sample_rate_is_overridden(with_yaml):
@@ -179,9 +202,9 @@ def test_dat_to_edf_with_yaml(with_yaml, tmp_path):
         assert r.getSampleFrequency(0) == pytest.approx(round(SF))
         # EDF unit is mV to match native TAINILIVE exports.
         assert r.getPhysicalDimension(0).strip() == "mV"
-        # Bipolar range is ±mvolt_range/2 since mvolt_range is peak-to-peak.
-        assert r.getPhysicalMaximum(0) == pytest.approx(MVOLT_RANGE / 2)
-        assert r.getPhysicalMinimum(0) == pytest.approx(-MVOLT_RANGE / 2)
+        # Default unipolar range is 0..mvolt_range (matches native exports).
+        assert r.getPhysicalMaximum(0) == pytest.approx(MVOLT_RANGE)
+        assert r.getPhysicalMinimum(0) == pytest.approx(0.0)
         # Channel labels: 'EEG <ch>' (zero-indexed), matching native exports.
         assert r.getLabel(0).strip() == "EEG 0"
         assert r.getLabel(N_CHANNELS - 1).strip() == f"EEG {N_CHANNELS - 1}"
@@ -193,6 +216,19 @@ def test_dat_to_edf_with_yaml(with_yaml, tmp_path):
             "SYNC_1",
             "SYNC_0",
         ]
+    finally:
+        r.close()
+
+
+def test_dat_to_edf_bipolar_range(with_yaml, tmp_path):
+    dat, _ = with_yaml
+    out = tmp_path / "out.edf"
+    dat_to_edf(dat, out, scaling="bipolar")
+    r = pyedflib.EdfReader(str(out))
+    try:
+        # Bipolar range is ±mvolt_range/2 since mvolt_range is peak-to-peak.
+        assert r.getPhysicalMaximum(0) == pytest.approx(MVOLT_RANGE / 2)
+        assert r.getPhysicalMinimum(0) == pytest.approx(-MVOLT_RANGE / 2)
     finally:
         r.close()
 

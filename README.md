@@ -46,11 +46,16 @@ Sidecar files, when used, must share the `.dat` basename:
 ## What's in the output EDF+
 
 - 16-bit EDF+ with one signal per channel, labelled `EEG 0`...`EEG N-1`.
-- Signals are in **millivolts (mV)** in a bipolar range `±mvolt_range / 2 mV`
-  (e.g. ±6.5 mV for the default 13 mV peak-to-peak ADC), centred so the
-  ADC midpoint corresponds to 0 V — i.e. the signal is zero-mean relative
-  to the ADC baseline, not offset like the native EDF export.
-- Lost-data samples (sentinel `32767`) are written as `0 mV`.
+- Signals are in **millivolts (mV)**. Two scaling conventions are available
+  (see `--scaling`):
+  - **`unipolar`** (default) — `0..mvolt_range mV` (e.g. 0–13 mV), with the
+    ADC midpoint at `mvolt_range/2`. **Matches native TAINILIVE exports**, so
+    converted files drop into pipelines calibrated to native recordings.
+  - **`bipolar`** — `±mvolt_range/2 mV` (e.g. ±6.5 mV), centred so the ADC
+    midpoint is 0 V (zero-mean). Differs from native files by a constant
+    `+mvolt_range/2` offset.
+- Lost-data samples (sentinel `32767`) are written as `0 mV`, so they fall
+  at the bottom rail and are rejected by extreme-value pre-filters.
 - `.sync` events become instantaneous EDF+ annotations of the form
   `SYNC_<value>`, aligned to the exact sample index in the EDF (no drift
   relative to the brain signal, regardless of recording length).
@@ -68,6 +73,7 @@ The EDF sample rate is the nearest integer to `nominal / decimation` Hz
 ## All CLI options
 
 ```
+--scaling unipolar|bipolar      signal convention (default unipolar, matches native)
 --no-yaml                       ignore any _configuration.yaml sidecar
 --no-sync                       ignore any .sync sidecar
 --channels N                    default 16
